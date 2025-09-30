@@ -1,0 +1,138 @@
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>NLP Query Engine — Demo</title>
+  <style>
+    body{font-family:Arial;padding:16px;max-width:1100px;margin:auto}
+    .panel{border:1px solid #ddd;padding:12px;margin-bottom:12px;border-radius:6px}
+    .row{display:flex;gap:12px}
+    .col{flex:1}
+    #drop{border:2px dashed #aaa;padding:20px;text-align:center;cursor:pointer}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #ccc;padding:6px}
+    .doc-card{border:1px solid #eee;padding:8px;margin:6px}
+  </style>
+</head>
+<body>
+  <h1>NLP Employee Query Engine — Demo</h1>
+
+  <div class="panel">
+    <h3>1) Connect to database</h3>
+    <input id="connstr" placeholder="sqlite:///./backend/demo.db or postgresql://..." style="width:70%"/>
+    <button id="connectBtn">Connect & Analyze</button>
+    <div id="connMsg"></div>
+    <pre id="schemaView"></pre>
+  </div>
+
+  <div class="panel">
+    <h3>2) Upload documents</h3>
+    <div id="drop">Drag & drop files here (PDF, DOCX, TXT, CSV) or click to select</div>
+    <input id="fileInput" type="file" multiple style="display:none"/>
+    <button id="uploadBtn">Upload Selected</button>
+    <div id="uploadStatus"></div>
+  </div>
+
+  <div class="panel">
+    <h3>3) Query</h3>
+    <input id="queryBox" style="width:80%" placeholder='Try: "How many employees do we have?" or "Average salary by department"' />
+    <button id="runQuery">Run</button>
+    <div id="metrics"></div>
+    <div id="history"></div>
+  </div>
+
+  <div class="panel" id="resultsPanel">
+    <h3>Results</h3>
+    <div id="results"></div>
+  </div>
+
+<script>
+const api = "http://127.0.0.1:8000";
+
+document.getElementById('connectBtn').onclick = async ()=>{
+  const conn = document.getElementById('connstr').value || 'sqlite:///./backend/demo.db';
+  const fd = new FormData(); fd.append('connection_string', conn);
+  document.getElementById('connMsg').textContent = 'Connecting...';
+  const res = await fetch(api + '/api/ingest/database', {method:'POST', body: fd});
+  const j = await res.json();
+  if (res.ok) {
+    document.getElementById('connMsg').textContent = 'Connected.';
+    document.getElementById('schemaView').textContent = JSON.stringify(j.schema, null, 2);
+  } else {
+    document.getElementById('connMsg').textContent = 'Error: ' + (j.detail || JSON.stringify(j));
+  }
+};
+
+// drag/drop files
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+let filesToUpload = [];
+drop.onclick = ()=> fileInput.click();
+drop.ondragover = (e)=>{ e.preventDefault(); drop.style.borderColor='green'; }
+drop.ondragleave = ()=>{ drop.style.borderColor='#aaa'; }
+drop.ondrop = (e)=>{ e.preventDefault(); drop.style.borderColor='#aaa'; filesToUpload = Array.from(e.dataTransfer.files); drop.textContent = filesToUpload.length + ' files ready'; }
+
+fileInput.onchange = ()=>{ filesToUpload = Array.from(fileInput.files); drop.textContent = filesToUpload.length + ' files ready'; }
+
+document.getElementById('uploadBtn').onclick = async ()=>{
+  if (!filesToUpload.length) return alert('Select files first');
+  const fd = new FormData();
+  for (let f of filesToUpload) fd.append('files', f);
+  const res = await fetch(api + '/api/ingest/documents', {method:'POST', body: fd});
+  const j = await res.json();
+  document.getElementById('uploadStatus').textContent = JSON.stringify(j);
+  // poll job status if started
+  if (j.job_id){
+    const statusBox = document.getElementById('uploadStatus');
+    const interval = setInterval(async ()=>{
+      const sres = await fetch(api + '/api/ingest/status/' + j.job_id);
+      if (sres.ok){
+        const st = await sres.json();
+        statusBox.textContent = JSON.stringify(st);
+        if (st.status === 'finished') clearInterval(interval);
+      } else {
+        clearInterval(interval);
+      }
+    }, 800);
+  }
+};
+
+document.getElementById('runQuery').onclick = async ()=>{
+  const q = document.getElementById('queryBox').value;
+  if (!q) return alert('Enter a query');
+  const fd = new FormData(); fd.append('query', q);
+  const t0 = performance.now();
+  const res = await fetch(api + '/api/query', {method:'POST', body: fd});
+  const j = await res.json();
+  const t1 = performance.now();
+  document.getElementById('metrics').textContent = `Roundtrip ms: ${(t1-t0).toFixed(1)} | server time: ${j.metrics ? j.metrics.time + 's' : 'n/a'} | cache: ${j.metrics ? j.metrics.cache_hit : 'n/a'}`;
+  // show results
+  const out = document.getElementById('results'); out.innerHTML = '';
+  if (j.results && j.results.structured){
+    out.innerHTML += '<h4>Structured</h4>';
+    const rows = j.results.structured.rows || [];
+    if (rows.length){
+      const keys = Object.keys(rows[0]);
+      let html = '<table><tr>' + keys.map(k=>'<th>'+k+'</th>').join('') + '</tr>';
+      for (let r of rows){
+        html += '<tr>' + keys.map(k=>'<td>'+(r[k]===null?'':r[k])+'</td>').join('') + '</tr>';
+      }
+      html += '</table>';
+      out.innerHTML += html;
+    } else out.innerHTML += '<div>No rows</div>';
+  }
+  if (j.results && j.results.documents){
+    out.innerHTML += '<h4>Documents</h4>';
+    for (let d of j.results.documents){
+      out.innerHTML += `<div class="doc-card">Source: ${d.source} | score: ${d.score}<div>${d.text.substring(0,400)}...</div></div>`;
+    }
+  }
+  // show history
+  const h = await fetch(api + '/api/query/history'); const hj = await h.json();
+  document.getElementById('history').textContent = JSON.stringify(hj, null, 2);
+};
+
+</script>
+</body>
+</html>

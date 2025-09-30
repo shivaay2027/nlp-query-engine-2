@@ -1,0 +1,2 @@
+John has a salary of 70000.
+Mary has a salary of 50000.

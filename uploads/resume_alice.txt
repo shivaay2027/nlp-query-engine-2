@@ -1,0 +1,1 @@
+Alice Johnson\nSkills: Python, SQL, Machine Learning\nExperience: 5 years at Acme Corp\n
