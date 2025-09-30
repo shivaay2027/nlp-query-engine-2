@@ -1,0 +1,17 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+.env/
+
+# Databases
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Uploads (optional – ignore uploaded docs to avoid clutter)
+uploads/
